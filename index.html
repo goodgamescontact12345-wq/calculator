@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#000000" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Calculator" />
+<title>Calculator</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png" />
+<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="cutscene.css" />
+<link rel="modulepreload" href="vendor/three.module.js" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/addons/"
+  }
+}
+</script>
+</head>
+<body>
+
+<main class="phone">
+  <section class="display" aria-live="polite">
+    <div class="calc-history" id="history">&nbsp;</div>
+    <output class="calc-value" id="value">0</output>
+  </section>
+
+  <section class="keys" id="keys">
+    <button class="key key-fn" data-action="clear" id="clearKey" aria-label="Clear">AC</button>
+    <button class="key key-fn" data-action="sign" aria-label="Toggle sign">+/&minus;</button>
+    <button class="key key-fn" data-action="percent" aria-label="Percent">%</button>
+    <button class="key key-op" data-op="&divide;" aria-label="Divide">&divide;</button>
+
+    <button class="key" data-digit="7">7</button>
+    <button class="key" data-digit="8">8</button>
+    <button class="key" data-digit="9">9</button>
+    <button class="key key-op" data-op="&times;" aria-label="Multiply">&times;</button>
+
+    <button class="key" data-digit="4">4</button>
+    <button class="key" data-digit="5">5</button>
+    <button class="key" data-digit="6">6</button>
+    <button class="key key-op" data-op="&minus;" aria-label="Subtract">&minus;</button>
+
+    <button class="key" data-digit="1">1</button>
+    <button class="key" data-digit="2">2</button>
+    <button class="key" data-digit="3">3</button>
+    <button class="key key-op" data-op="+" aria-label="Add">+</button>
+
+    <button class="key key-zero" data-digit="0">0</button>
+    <button class="key" data-digit=".">.</button>
+    <button class="key key-op" data-op="=" aria-label="Equals">=</button>
+  </section>
+</main>
+
+<div class="cutscene" id="cutscene" aria-hidden="true">
+  <canvas class="cs-canvas" id="csCanvas"></canvas>
+  <div class="cs-grain"></div>
+  <div class="cs-vignette"></div>
+  <div class="cs-bar cs-bar-top"></div>
+  <div class="cs-bar cs-bar-bottom"></div>
+  <h2 class="cs-title" aria-hidden="true">
+    <span>S</span><span>I</span><span>X</span><span class="cs-space"></span><span>S</span><span>E</span><span>V</span><span>E</span><span>N</span>
+  </h2>
+  <div class="cs-flash" id="csFlash"></div>
+  <div class="cs-hint">tap to skip</div>
+  <div class="cs-fallback" aria-hidden="true"><span>6</span><span>7</span></div>
+</div>
+
+<script src="calculator.js"></script>
+<script src="cutscene.js"></script>
+<script type="module" src="scene.js"></script>
+</body>
+</html>
