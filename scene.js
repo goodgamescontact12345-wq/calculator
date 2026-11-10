@@ -8,31 +8,44 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { score } from './score.js';
 
-const DURATION = 10.6;
+const DURATION = 20.0;
 
+/* Three acts: the city, the kid, the number.
+ * 0.0 – 3.4   rain, clock, a title card, the city breathing
+ * 3.4 – 10.0  reveal, first step, arm raised, charge
+ * 10.0 – 12.4 slow motion through the shockwave
+ * 12.4 – 16.67 the storm answers
+ * 16.67 – 20.0 the sky spells it out
+ */
 const T = {
-  reveal: 1.1,
-  strike: 1.8,
-  armUp: 2.5,
-  charge: 3.4,
-  slam: 4.65,
-  orbit: 5.5,
-  storm: 6.0,
-  storm2: 6.7,
-  final: 7.8,
+  reveal: 3.4,
+  strike: 5.4,
+  armUp: 7.0,
+  charge: 8.6,
+  slam: 10.0,
+  slowEnd: 12.4,
+  orbit: 12.8,
+  storm: 13.33,
+  storm2: 14.6,
+  final: 16.67,
+  hold: 18.4,
 };
 
 const CAM = [
-  { t: 0.0,  p: [0, 760, 1450],   l: [0, 520, 0] },
-  { t: 1.1,  p: [300, 430, 900],  l: [0, 560, 0] },
-  { t: 2.4,  p: [620, 400, 700],  l: [0, 600, 0] },
-  { t: 3.6,  p: [760, 470, 520],  l: [0, 640, 0] },
-  { t: 4.65, p: [640, 300, 560],  l: [0, 280, 0] },
-  { t: 5.6,  p: [420, 520, 820],  l: [0, 620, 0] },
-  { t: 6.9,  p: [-520, 560, 780], l: [0, 640, 0] },
-  { t: 7.8,  p: [0, 1080, 1650],  l: [0, 900, -180] },
-  { t: 10.6, p: [0, 1020, 1580],  l: [0, 900, -180] },
+  { t: 0.0,   p: [0, 820, 1500],    l: [0, 300, 0] },
+  { t: 3.4,   p: [380, 330, 990],   l: [0, 640, 0] },
+  { t: 5.4,   p: [720, 230, 700],   l: [120, 380, 120] },
+  { t: 7.0,   p: [560, 430, 790],   l: [0, 620, 0] },
+  { t: 8.6,   p: [300, 520, 780],   l: [0, 650, 0] },
+  { t: 10.0,  p: [430, 330, 640],   l: [0, 300, 0] },
+  { t: 12.4,  p: [520, 300, 560],   l: [0, 250, 0] },
+  { t: 13.33, p: [-420, 430, 820],  l: [0, 600, 0] },
+  { t: 14.6,  p: [-700, 520, 700],  l: [0, 640, 0] },
+  { t: 16.67, p: [0, 900, 1900],    l: [0, 1200, -600] },
+  { t: 18.4,  p: [0, 980, 1760],    l: [0, 1180, -600] },
+  { t: 20.0,  p: [0, 1060, 1640],   l: [0, 1150, -600] },
 ];
 
 /* ---------------------------------------------------------------- helpers */
@@ -97,6 +110,8 @@ const state = {
   charge: null,
   chargeRing: [],
   fire: [],
+  crater: null,
+  fireCols: [],
 };
 
 const BASE_FOG = new THREE.Color(0x070a13);
@@ -136,237 +151,18 @@ const FX_SHADER = {
 
 /* ---------------------------------------------------------------- audio */
 
-function audioContext() {
-  if (state.audio) {
-    if (state.audio.state === 'suspended') state.audio.resume();
-    return state.audio;
-  }
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return null;
-  state.audio = new AC();
-  state.master = state.audio.createGain();
-  state.master.gain.value = 0.8;
-  const comp = state.audio.createDynamicsCompressor();
-  comp.threshold.value = -18;
-  comp.ratio.value = 6;
-  state.master.connect(comp).connect(state.audio.destination);
-  return state.audio;
-}
+/* The cutscene is scored by score.js; the scene only fires spot effects. */
 
-function noiseBuffer(duration) {
-  const ac = audioContext();
-  if (!ac) return null;
-  if (state.noise && state.noise.duration >= duration) return state.noise;
-  const len = Math.floor(ac.sampleRate * duration);
-  const buf = ac.createBuffer(1, len, ac.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
-  state.noise = buf;
-  return buf;
-}
-
-function sub(freq, start, dur, gain) {
-  const ac = audioContext();
-  if (!ac) return;
-  const t0 = ac.currentTime + start;
-  const osc = ac.createOscillator();
-  const g = ac.createGain();
-  osc.type = 'sine';
-  osc.frequency.setValueAtTime(freq, t0);
-  osc.frequency.exponentialRampToValueAtTime(Math.max(18, freq * 0.35), t0 + dur);
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(gain, t0 + 0.02);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  osc.connect(g).connect(state.master);
-  osc.start(t0);
-  osc.stop(t0 + dur + 0.05);
-}
-
-function thunder(power = 1, delay = 0) {
-  const ac = audioContext();
-  if (!ac) return;
-  const buf = noiseBuffer(2.4);
-  if (!buf) return;
-  const t0 = ac.currentTime + delay;
-  const src = ac.createBufferSource();
-  src.buffer = buf;
-  const lp = ac.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.setValueAtTime(3200, t0);
-  lp.frequency.exponentialRampToValueAtTime(90, t0 + 2.0);
-  const g = ac.createGain();
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(0.6 * power, t0 + 0.025);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.2);
-  src.connect(lp).connect(g).connect(state.master);
-  src.start(t0);
-  src.stop(t0 + 2.3);
-  sub(78, delay, 1.2, 0.5 * power);
-}
-
-function zap(delay = 0) {
-  const ac = audioContext();
-  if (!ac) return;
-  const buf = noiseBuffer(0.3);
-  if (!buf) return;
-  const t0 = ac.currentTime + delay;
-  const src = ac.createBufferSource();
-  src.buffer = buf;
-  const hp = ac.createBiquadFilter();
-  hp.type = 'bandpass';
-  hp.frequency.setValueAtTime(2600, t0);
-  hp.Q.value = 0.8;
-  const g = ac.createGain();
-  g.gain.setValueAtTime(0.28, t0);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
-  src.connect(hp).connect(g).connect(state.master);
-  src.start(t0, Math.random(), 0.25);
-}
-
-function boom() {
-  sub(140, 0, 1.6, 1.0);
-  const ac = audioContext();
-  if (!ac) return;
-  const buf = noiseBuffer(1.4);
-  if (!buf) return;
-  const t0 = ac.currentTime;
-  const src = ac.createBufferSource();
-  src.buffer = buf;
-  const lp = ac.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.setValueAtTime(800, t0);
-  lp.frequency.exponentialRampToValueAtTime(60, t0 + 1.2);
-  const g = ac.createGain();
-  g.gain.setValueAtTime(0.7, t0);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.3);
-  src.connect(lp).connect(g).connect(state.master);
-  src.start(t0);
-  src.stop(t0 + 1.4);
-}
-
-function roar() {
-  const ac = audioContext();
-  if (!ac) return;
-  const t0 = ac.currentTime;
-  const osc = ac.createOscillator();
-  const osc2 = ac.createOscillator();
-  const g = ac.createGain();
-  const lp = ac.createBiquadFilter();
-  osc.type = 'sawtooth';
-  osc2.type = 'square';
-  osc.frequency.setValueAtTime(72, t0);
-  osc.frequency.linearRampToValueAtTime(52, t0 + 1.3);
-  osc2.frequency.setValueAtTime(108, t0);
-  osc2.frequency.linearRampToValueAtTime(74, t0 + 1.3);
-  lp.type = 'lowpass';
-  lp.frequency.setValueAtTime(700, t0);
-  lp.frequency.linearRampToValueAtTime(240, t0 + 1.3);
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(0.22, t0 + 0.12);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.5);
-  // wobble
-  const lfo = ac.createOscillator();
-  const lfoGain = ac.createGain();
-  lfo.frequency.value = 11;
-  lfoGain.gain.value = 9;
-  lfo.connect(lfoGain).connect(osc.frequency);
-  osc.connect(lp);
-  osc2.connect(lp);
-  lp.connect(g).connect(state.master);
-  osc.start(t0); osc2.start(t0); lfo.start(t0);
-  osc.stop(t0 + 1.6); osc2.stop(t0 + 1.6); lfo.stop(t0 + 1.6);
-}
-
-function droneStart() {
-  const ac = audioContext();
-  if (!ac) return;
-  droneStop();
-  const t0 = ac.currentTime;
-  const g = ac.createGain();
-  const lp = ac.createBiquadFilter();
-  lp.type = 'lowpass';
-  lp.frequency.setValueAtTime(220, t0);
-  lp.frequency.linearRampToValueAtTime(900, t0 + 7.5);
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.linearRampToValueAtTime(0.1, t0 + 3.5);
-  g.gain.linearRampToValueAtTime(0.16, t0 + 7.4);
-  g.gain.linearRampToValueAtTime(0.0001, t0 + 9.0);
-  const a = ac.createOscillator();
-  const b = ac.createOscillator();
-  a.type = 'sawtooth';
-  b.type = 'sawtooth';
-  a.frequency.setValueAtTime(41, t0);
-  b.frequency.setValueAtTime(61.5, t0);
-  a.frequency.linearRampToValueAtTime(55, t0 + 7.5);
-  b.frequency.linearRampToValueAtTime(82.5, t0 + 7.5);
-  a.connect(lp); b.connect(lp);
-  lp.connect(g).connect(state.master);
-  a.start(t0); b.start(t0);
-  a.stop(t0 + 9.2); b.stop(t0 + 9.2);
-  state.droneNodes = [a, b, g];
-}
-
-function droneStop() {
-  const ac = state.audio;
-  if (!ac) return;
-  state.droneNodes.forEach((node) => {
-    try { node.stop && node.stop(); } catch (e) { /* already stopped */ }
-  });
-  state.droneNodes = [];
-}
-
-function finalChord() {
-  const ac = audioContext();
-  if (!ac) return;
-  [73.4, 110, 146.8, 220].forEach((f, i) => {
-    const t0 = ac.currentTime + i * 0.015;
-    const osc = ac.createOscillator();
-    const g = ac.createGain();
-    osc.type = i > 1 ? 'triangle' : 'sine';
-    osc.frequency.value = f;
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(0.34 / (i + 1), t0 + 0.04);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.6);
-    osc.connect(g).connect(state.master);
-    osc.start(t0);
-    osc.stop(t0 + 2.7);
-  });
-}
-
-function pad() {
-  const ac = audioContext();
-  if (!ac) return;
-  const t0 = ac.currentTime;
-  const lp = ac.createBiquadFilter();
-  const g = ac.createGain();
-  lp.type = 'lowpass';
-  lp.frequency.setValueAtTime(420, t0);
-  lp.frequency.linearRampToValueAtTime(2600, t0 + 1.1);
-  lp.frequency.linearRampToValueAtTime(700, t0 + 3.2);
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.linearRampToValueAtTime(0.12, t0 + 0.9);
-  g.gain.linearRampToValueAtTime(0.0001, t0 + 3.4);
-  lp.connect(g).connect(state.master);
-  [110, 164.81, 220, 329.63].forEach((f, i) => {
-    const osc = ac.createOscillator();
-    osc.type = 'triangle';
-    osc.frequency.value = f * (i % 2 ? 1.003 : 0.997);
-    osc.connect(lp);
-    osc.start(t0);
-    osc.stop(t0 + 3.5);
-  });
-}
-
-function audioStart() {
-  const ac = audioContext();
-  if (!ac) return;
-  ac.resume();
-  droneStart();
-}
-
-function audioStop() {
-  droneStop();
-}
+const audioContext = () => score.context();
+const audioStart = () => score.start();
+const audioStop = () => score.stop();
+const sub = (freq, delay, dur, gain) => score.sub(freq, delay, dur, gain);
+const thunder = (power, delay) => score.thunder(power, delay);
+const zap = (delay) => score.zap(delay);
+const boom = () => score.boom();
+const roar = () => score.roar();
+const pad = () => score.pad();
+const finalChord = () => score.finalChord();
 
 /* ---------------------------------------------------------------- textures */
 
@@ -625,6 +421,131 @@ function buildKidFx() {
   }
 }
 
+/* ---------------------------------------------------------------- crater + fire */
+
+function buildCrater() {
+  const group = new THREE.Group();
+
+  const disk = new THREE.Mesh(
+    new THREE.CircleGeometry(340, 56),
+    new THREE.MeshBasicMaterial({
+      color: 0x05060b,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+    })
+  );
+  disk.rotation.x = -Math.PI / 2;
+  disk.position.y = 2.5;
+  group.add(disk);
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(300, 356, 72),
+    new THREE.MeshBasicMaterial({
+      color: 0xff6a1e,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      toneMapped: false,
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 4;
+  group.add(ring);
+
+  const cracks = [];
+  for (let i = 0; i < 12; i++) {
+    const crack = new THREE.Mesh(
+      new THREE.PlaneGeometry(300, 12),
+      new THREE.MeshBasicMaterial({
+        color: 0xff7a22,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      })
+    );
+    const a = (i / 12) * Math.PI * 2 + rnd(-0.12, 0.12);
+    crack.rotation.set(-Math.PI / 2, 0, a);
+    crack.position.set(Math.cos(a) * 300, 5, Math.sin(a) * 300);
+    crack.scale.x = rnd(0.5, 1.4);
+    group.add(crack);
+    cracks.push({ mesh: crack, phase: Math.random() * 10, base: crack.scale.x });
+  }
+
+  group.visible = false;
+  scene.add(group);
+  state.crater = { group, ring, cracks, glow: 0 };
+}
+
+function buildFires() {
+  const tex = dotTexture();
+  state.fireCols = [];
+  for (let i = 0; i < 16; i++) {
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: tex,
+        color: 0xff8a3a,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      })
+    );
+    sprite.visible = false;
+    scene.add(sprite);
+    state.fireCols.push({ sprite, life: 0, base: 120, phase: Math.random() * 10 });
+  }
+}
+
+function igniteFire(b) {
+  const f = state.fireCols.find((x) => x.life <= 0);
+  if (!f) return;
+  const pos = b.group.position.clone();
+  pos.y = Math.max(30, b.h * 0.16);
+  f.sprite.position.copy(pos);
+  f.sprite.visible = true;
+  f.base = Math.max(90, b.h * 0.55);
+  f.life = 60;
+  f.sprite.material.opacity = 0.7;
+  f.sprite.scale.set(f.base * 0.55, f.base, 1);
+}
+
+function crushNearest() {
+  const foot = new THREE.Vector3(430, 0, 300);
+  let target = null;
+  let best = Infinity;
+  state.city.forEach((b) => {
+    if (b.crushed) return;
+    const d = b.group.position.distanceTo(foot);
+    if (d < best) {
+      best = d;
+      target = b;
+    }
+  });
+  if (!target) return null;
+  target.crushed = true;
+  target.ignited = true;
+  target.group.scale.y = 0.28;
+  target.group.rotation.z = rnd(-0.14, 0.14);
+  const p = target.group.position.clone();
+  spawnDust(new THREE.Vector3(p.x, 30, p.z), 70, 1.6);
+  spawnDebris(new THREE.Vector3(p.x, 60, p.z), 50, 1.6);
+  spawnSparks(new THREE.Vector3(p.x, 60, p.z), 90, 1.4);
+  igniteFire(target);
+  state.aberration = Math.min(0.5, state.aberration + 0.25);
+  return target;
+}
+
+function slowFactor(t) {
+  if (t < T.slam || t > T.slowEnd) return 1;
+  return 0.28 + 0.72 * smooth(T.slam + 0.15, T.slowEnd, t);
+}
+
 /* ---------------------------------------------------------------- scene build */
 
 function buildSky() {
@@ -767,7 +688,7 @@ function buildCity() {
     for (let gz = -7; gz <= 5; gz++) {
       const x = gx * 228 + rnd(-44, 44);
       const z = gz * 228 + rnd(-44, 44);
-      if (Math.hypot(x, z) < 1000) continue;
+      if (Math.hypot(x, z) < 520) continue;
       if (Math.random() < 0.12) continue;
       const far = clamp(Math.hypot(x, z) / 1350, 0, 1);
       addBuilding(
@@ -794,6 +715,16 @@ function buildCity() {
       false
     );
   }
+
+  // foreground towers inside the plaza, so the giant has something underfoot
+  [
+    [430, 300, 92, 84, 205],
+    [640, 520, 96, 90, 240],
+    [-560, 480, 100, 94, 250],
+    [700, -330, 88, 84, 190],
+    [-660, -470, 96, 96, 235],
+    [330, -640, 84, 86, 160],
+  ].forEach(([x, z, w, d, h]) => addBuilding(x, z, w, d, h, true));
 }
 
 function buildKid() {
@@ -1354,6 +1285,8 @@ function build() {
   buildCity();
   buildKid();
   buildKidFx();
+  buildCrater();
+  buildFires();
   buildLights();
   buildParticles();
   buildGlows();
@@ -1396,6 +1329,21 @@ function resetScene() {
     b.tilt = 0;
     b.speed = 0;
     b.group.rotation.set(0, 0, 0);
+    b.group.scale.y = 1;
+    b.crushed = false;
+    b.ignited = false;
+  });
+
+  if (state.crater) {
+    state.crater.group.visible = false;
+    state.crater.glow = 0;
+    state.crater.ring.material.opacity = 0;
+    state.crater.cracks.forEach((k) => { k.mesh.material.opacity = 0; });
+  }
+  state.fireCols.forEach((f) => {
+    f.life = 0;
+    f.sprite.visible = false;
+    f.sprite.material.opacity = 0;
   });
 
   state.fire.forEach((f) => {
@@ -1522,6 +1470,27 @@ function updateFire(dt) {
     f.sprite.scale.setScalar(f.base * (1.5 - k * 0.5));
     if (f.life <= 0) f.sprite.visible = false;
   });
+
+  // burning ruins keep flickering until the cutscene ends
+  state.fireCols.forEach((f) => {
+    if (f.life <= 0) return;
+    f.life -= dt;
+    const flick = 0.72 + Math.sin(elapsed * 7 + f.phase) * 0.16 + Math.sin(elapsed * 13.7 + f.phase * 2) * 0.1;
+    f.sprite.material.opacity = clamp(flick, 0, 1) * 0.85;
+    f.sprite.scale.set(f.base * 0.55 * flick, f.base * (0.9 + flick * 0.3), 1);
+    if (f.life <= 0) f.sprite.visible = false;
+  });
+
+  const c = state.crater;
+  if (c && c.group.visible) {
+    c.glow = Math.max(0, c.glow - dt * 0.18);
+    const pulse = 0.45 + Math.sin(elapsed * 5.1) * 0.12 + c.glow * 0.6;
+    c.ring.material.opacity = clamp(pulse * 0.8, 0, 1);
+    c.cracks.forEach((k) => {
+      k.mesh.material.opacity = clamp(0.28 + Math.sin(elapsed * 6.3 + k.phase) * 0.16 + c.glow * 0.5, 0, 1);
+      k.mesh.scale.x = k.base * (0.9 + Math.sin(elapsed * 4 + k.phase) * 0.08);
+    });
+  }
 }
 
 function kidPose(t) {
@@ -1542,8 +1511,12 @@ function kidPose(t) {
   kid.arms.right.rotation.z = -0.12 + Math.sin(t * 1.7) * 0.03;
   kid.arms.left.rotation.x = 0.05 + Math.sin(t * 1.3) * 0.05;
 
-  kid.root.rotation.z = Math.sin(t * 0.9) * 0.006;
-  kid.root.position.y = Math.sin(t * 1.4) * 3;
+  // the step at T.strike lands with the whole body
+  const stomp = t > T.strike && t < T.strike + 0.6
+    ? Math.sin(((t - T.strike) / 0.6) * Math.PI)
+    : 0;
+  kid.root.rotation.z = Math.sin(t * 0.9) * 0.006 - stomp * 0.02;
+  kid.root.position.y = Math.sin(t * 1.4) * 3 - stomp * 46;
   kid.torso.scale.set(1 + Math.sin(t * 1.4) * 0.006, 1 + Math.sin(t * 1.4) * 0.008, 1);
   kid.head.rotation.y = Math.sin(t * 0.8) * 0.07;
   kid.head.rotation.x = smooth(T.slam + 0.1, T.slam + 0.5, t) * -0.18;
@@ -1589,14 +1562,16 @@ function updateWorld(dt, t) {
   });
 
   if (t >= T.strike) once('strike', () => {
-    const b = state.city[Math.floor(state.city.length * 0.35)] || state.city[0];
-    const pos = b ? b.group.position.clone() : new THREE.Vector3(-200, 0, 100);
-    groundStrike(pos.x, pos.z, b ? b.h : 150);
-    explode(new THREE.Vector3(pos.x, b ? b.h * 0.7 : 120, pos.z), 1.5);
-    toppleNear(pos, 420, 1.0);
-    addShake(0.85);
+    const b = crushNearest();
+    const pos = b ? b.group.position.clone() : new THREE.Vector3(620, 0, 480);
+    groundStrike(pos.x, pos.z, b ? b.h : 180);
+    explode(new THREE.Vector3(pos.x, b ? b.h * 0.55 : 90, pos.z), 1.9);
+    toppleNear(pos, 460, 1.1);
+    addShake(1.2);
+    state.fovPunch = 0.5;
+    state.flashLevel = 1.3;
     thunder(1, 0);
-    state.flashLevel = 1.2;
+    boom();
     if (onEvent) onEvent('flash');
   });
 
@@ -1610,16 +1585,33 @@ function updateWorld(dt, t) {
     toppleNear(new THREE.Vector3(0, 0, 0), 1500, 1.6);
     const impact = new THREE.Vector3(0, 20, 0);
     explode(impact, 2.6);
-    spawnDebris(impact, 70, 2.0);
-    spawnSparks(impact, 340, 2.2);
-    spawnDust(impact, 120, 2.0);
+    spawnDebris(impact, 110, 2.2);
+    spawnSparks(impact, 420, 2.2);
+    spawnDust(impact, 160, 2.2);
     addShake(1.8);
     state.flashLevel = 1.6;
     state.fovPunch = 1;
+    if (state.crater) {
+      state.crater.group.visible = true;
+      state.crater.glow = 1;
+    }
+    // everything close enough catches fire
+    state.city.forEach((b) => {
+      if (b.toppled && b.group.position.length() < 900) igniteFire(b);
+    });
+    score.muffle(0.9);
     boom();
     thunder(0.9, 0.05);
     roar();
     if (onEvent) onEvent('bigflash');
+  });
+
+  if (t >= T.slowEnd) once('slowEnd', () => {
+    score.muffle(0);
+    addShake(0.55);
+    spawnDust(new THREE.Vector3(0, 20, 0), 60, 1.2);
+    thunder(0.45, 0.05);
+    if (onEvent) onEvent('flash');
   });
 
   if (t >= T.storm) once('storm1', () => {
@@ -1651,6 +1643,7 @@ function updateWorld(dt, t) {
   });
 
   if (t >= T.final) once('final', () => {
+    score.muffle(0);
     addBolt(
       boltPolyline(
         new THREE.Vector3(rnd(-200, 200), 3200, -900),
@@ -1673,11 +1666,14 @@ function updateWorld(dt, t) {
     if (onEvent) onEvent('bigflash');
   });
 
+  // slow motion stretches every physical body, not the story clock
+  const pdt = dt * slowFactor(t);
+
   // city collapse
   state.city.forEach((b) => {
     if (!b.toppled) return;
     if (b.tilt < Math.PI / 2) {
-      b.tilt = Math.min(Math.PI / 2, b.tilt + b.speed * dt);
+      b.tilt = Math.min(Math.PI / 2, b.tilt + b.speed * pdt);
       const axis = b.axis === 'x' ? 'x' : 'z';
       b.group.rotation[axis] = b.tilt * b.dir;
       if (Math.random() < 0.25) {
@@ -1686,7 +1682,11 @@ function updateWorld(dt, t) {
         spawnDust(top, 1, 0.5);
       }
     } else if (b.group.position.y > -b.h * 0.55) {
-      b.group.position.y -= dt * 26;
+      b.group.position.y -= pdt * 26;
+      if (!b.ignited) {
+        b.ignited = true;
+        igniteFire(b);
+      }
     }
   });
 
@@ -1703,15 +1703,15 @@ function updateWorld(dt, t) {
       d.mesh.setMatrixAt(i, d.dummy.matrix);
       return;
     }
-    item.v.y -= 520 * dt;
-    item.p.addScaledVector(item.v, dt);
+    item.v.y -= 520 * pdt;
+    item.p.addScaledVector(item.v, pdt);
     if (item.p.y < 6) {
       item.p.y = 6;
       item.v.y *= -0.32;
       item.v.x *= 0.6;
       item.v.z *= 0.6;
     }
-    item.r.addScaledVector(item.rv, dt);
+    item.r.addScaledVector(item.rv, pdt);
     d.dummy.position.copy(item.p);
     d.dummy.rotation.set(item.r.x, item.r.y, item.r.z);
     d.dummy.scale.setScalar(item.s * Math.min(1, item.life));
@@ -1729,10 +1729,10 @@ function updateWorld(dt, t) {
       s.pos[i * 3 + 1] = -9000;
       continue;
     }
-    s.vel[i * 3 + 1] -= 620 * dt;
-    s.pos[i * 3] += s.vel[i * 3] * dt;
-    s.pos[i * 3 + 1] += s.vel[i * 3 + 1] * dt;
-    s.pos[i * 3 + 2] += s.vel[i * 3 + 2] * dt;
+    s.vel[i * 3 + 1] -= 620 * pdt;
+    s.pos[i * 3] += s.vel[i * 3] * pdt;
+    s.pos[i * 3 + 1] += s.vel[i * 3 + 1] * pdt;
+    s.pos[i * 3 + 2] += s.vel[i * 3 + 2] * pdt;
     const k = Math.min(1, s.life[i] * 1.6);
     s.col[i * 3] *= 0.994;
     s.col[i * 3 + 1] *= 0.994;
@@ -1751,10 +1751,10 @@ function updateWorld(dt, t) {
       du.pos[i * 3 + 1] = -9000;
       continue;
     }
-    du.vel[i * 3 + 1] += 26 * dt;
-    du.pos[i * 3] += du.vel[i * 3] * dt;
-    du.pos[i * 3 + 1] += du.vel[i * 3 + 1] * dt;
-    du.pos[i * 3 + 2] += du.vel[i * 3 + 2] * dt;
+    du.vel[i * 3 + 1] += 26 * pdt;
+    du.pos[i * 3] += du.vel[i * 3] * pdt;
+    du.pos[i * 3 + 1] += du.vel[i * 3 + 1] * pdt;
+    du.pos[i * 3 + 2] += du.vel[i * 3 + 2] * pdt;
     const f = Math.min(1, du.life[i] * 0.9);
     du.col[i * 3] *= f > 0.5 ? 1 : 0.985;
   }

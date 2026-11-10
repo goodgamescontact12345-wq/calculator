@@ -3,7 +3,7 @@
 
   var root = document.getElementById('cutscene');
   var flashEl = document.getElementById('csFlash');
-  var DURATION = 10.6;
+  var DURATION = 20.0;
   var FALLBACK_MS = 3200;
 
   var playing = false;
